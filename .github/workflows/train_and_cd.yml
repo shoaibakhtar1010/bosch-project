@@ -1,0 +1,123 @@
+name: train-ray-and-cd
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * 0"  # weekly
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  train_ray:
+    # IMPORTANT: set your self-hosted runner labels here
+    runs-on: [self-hosted, linux, gpu]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: install
+        run: |
+          python -m pip install -U pip
+          pip install -e ".[dev]"
+
+      # KaggleHub often needs Kaggle API creds. Put them in repo secrets.
+      - name: configure kaggle credentials
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: |
+          mkdir -p ~/.kaggle
+          printf '{"username":"%s","key":"%s"}' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > ~/.kaggle/kaggle.json
+          chmod 600 ~/.kaggle/kaggle.json
+
+      - name: download dataset
+        id: data
+        run: |
+          python - <<'PY'
+          import kagglehub
+          p = kagglehub.dataset_download("ninadmehendale/multimodal-iris-fingerprint-biometric-data")
+          print(p)
+          PY
+
+      # Single-node Ray on self-hosted is still "distributed" (multi-worker parallelism).
+      - name: start ray
+        run: |
+          ray stop || true
+          ray start --head --port=6379
+          echo "RAY_ADDRESS=127.0.0.1:6379" >> $GITHUB_ENV
+
+      - name: ray preprocess (manifest)
+        run: |
+          DATASET_DIR=$(python - <<'PY'
+          import kagglehub
+          print(kagglehub.dataset_download("ninadmehendale/multimodal-iris-fingerprint-biometric-data"))
+          PY
+          )
+          mmbiometric-ray-preprocess \
+            --dataset-dir "$DATASET_DIR" \
+            --output-dir runs/train_ray \
+            --num-cpus 32
+
+      - name: ray train (distributed)
+        run: |
+          DATASET_DIR=$(python - <<'PY'
+          import kagglehub
+          print(kagglehub.dataset_download("ninadmehendale/multimodal-iris-fingerprint-biometric-data"))
+          PY
+          )
+          mmbiometric-ray-train \
+            --config configs/default.yaml \
+            --dataset-dir "$DATASET_DIR" \
+            --output-dir runs/train_ray \
+            --num-workers 2 \
+            --use-gpu \
+            --cpus-per-worker 4
+
+      - name: upload model artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-artifacts
+          path: |
+            runs/train_ray/best.pt
+            runs/train_ray/labels.json
+            runs/train_ray/model_metadata.json
+            runs/train_ray/manifest.parquet
+            runs/train_ray/splits/**
+
+  build_push_infer:
+    needs: train_ray
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: download model artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: model-artifacts
+          path: artifacts
+
+      - name: prepare model folder for docker build
+        run: |
+          rm -rf model
+          mkdir -p model
+          cp artifacts/best.pt model/
+          cp artifacts/labels.json model/
+
+      - name: login to ghcr
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: build and push inference image
+        run: |
+          IMAGE="ghcr.io/${{ github.repository }}/mmbiometric-infer:sha-${{ github.sha }}"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
