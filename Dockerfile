@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY pyproject.toml README.md /app/
 COPY src /app/src
-RUN pip install -U pip && pip install -e .
+RUN pip install -U pip && pip install -e ".[serve]"
 
 # CD job will create a local ./model folder (best.pt + labels.json) before docker build
 COPY model /model

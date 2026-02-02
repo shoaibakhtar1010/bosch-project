@@ -4,6 +4,9 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+import os
+from datetime import datetime, timezone
+
 
 import pandas as pd
 import torch
@@ -183,14 +186,40 @@ def _train_loop_per_worker(cfg: dict[str, Any]) -> None:
         train.report({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss, "val_acc": val_acc})
 
     # write metadata once
+    # write metadata once
     if rank == 0:
         meta = {
+            # model reconstruction contract (critical for decoupled inference)
+            "backbone": app_cfg.model.backbone,
+            "embedding_dim": app_cfg.model.embedding_dim,
+            "dropout": app_cfg.model.dropout,
+            "image_size": app_cfg.data.image_size,
+
+            # training info
             "best_val_acc": best_acc,
-            "config": str(config_path),
-            "dataset_dir": str(dataset_dir),
-            "manifest": str(manifest_path),
+            "epochs": app_cfg.train.epochs,
+            "batch_size": app_cfg.data.batch_size,
+            "seed": app_cfg.seed,
+
+            # artifact locations
+            "checkpoint_path": str(best_path),
+            "labels_path": str(output_dir / "labels.json"),
+            "manifest_path": str(manifest_path),
+            "train_manifest": str(output_dir / "splits" / "train_manifest.parquet"),
+            "val_manifest": str(output_dir / "splits" / "val_manifest.parquet"),
+
+            # run provenance (useful in MLOps)
+            "git_sha": os.environ.get("GITHUB_SHA"),
+            "trained_at_utc": datetime.now(timezone.utc).isoformat(),
+            "ray_world_size": train.get_context().get_world_size(),
+            "ray_use_gpu": bool(torch.cuda.is_available()),
         }
-        (output_dir / "model_metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    (output_dir / "model_metadata.json").write_text(
+        json.dumps(meta, indent=2),
+        encoding="utf-8",
+    )
+
+    (output_dir / "model_metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
 
 def train_distributed(args: RayTrainArgs) -> None:
