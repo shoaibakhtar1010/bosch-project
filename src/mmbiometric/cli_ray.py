@@ -7,7 +7,7 @@ from pathlib import Path
 import ray
 
 from mmbiometric.distributed.ray_manifest import build_manifest_distributed
-from mmbiometric.distributed.ray_train import train_distributed
+from mmbiometric.distributed.ray_train import RayTrainArgs, train_distributed
 
 
 def _ray_init() -> None:
@@ -31,6 +31,12 @@ def preprocess_main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--num-cpus", type=int, default=4, help="CPUs to use for preprocessing")
     args = parser.parse_args(argv)
+    config_value = args.config.strip()
+    if not config_value:
+        raise SystemExit("Config path is empty. Set --config or CONFIG_PATH to a valid YAML file.")
+    config_path = Path(config_value).expanduser()
+    if config_path.is_dir():
+        raise SystemExit(f"Config path must be a file, got directory: {config_path}")
 
     _ray_init()
 
@@ -53,18 +59,34 @@ def train_main(argv: list[str] | None = None) -> None:
     parser.add_argument("--output-dir", required=True, help="Output directory (must contain manifest.parquet)")
     parser.add_argument("--num-workers", type=int, default=2, help="Number of Ray Train workers")
     parser.add_argument("--cpus-per-worker", type=int, default=2, help="CPUs per worker")
+    parser.add_argument(
+        "--master-addr",
+        help="Override MASTER_ADDR for torch distributed (useful on Windows multi-worker).",
+    )
+    parser.add_argument(
+        "--gloo-ifname",
+        help="Override GLOO_SOCKET_IFNAME for torch distributed (e.g. 'Wi-Fi').",
+    )
     args = parser.parse_args(argv)
+    config_value = args.config.strip()
+    if not config_value:
+        raise SystemExit("Config path is empty. Set --config or CONFIG_PATH to a valid YAML file.")
+    config_path = Path(config_value).expanduser()
+    if config_path.is_dir():
+        raise SystemExit(f"Config path must be a file, got directory: {config_path}")
 
     _ray_init()
 
-    # Your train_distributed() expects an args object; keep this consistent with your ray_train.py.
-    train_distributed(
-        config=args.config,
+    ray_args = RayTrainArgs(
+        config_path=str(config_path),
         dataset_dir=args.dataset_dir,
         output_dir=args.output_dir,
         num_workers=args.num_workers,
         cpus_per_worker=args.cpus_per_worker,
+        master_addr=args.master_addr,
+        gloo_socket_ifname=args.gloo_ifname,
     )
+    train_distributed(ray_args)
 
 
 def main() -> None:

@@ -53,6 +53,8 @@ def load_config(path: str | Path) -> AppConfig:
     """
 
     p = Path(path).expanduser()
+    if p.is_dir():
+        raise IsADirectoryError(f"Config path is a directory, expected file: {p}")
     if not p.exists():
         raise FileNotFoundError(f"Config file not found: {p}")
 
