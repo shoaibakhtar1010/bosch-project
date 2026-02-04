@@ -8,7 +8,6 @@ version = "0.1.0"
 description = "Multimodal biometric (iris + fingerprint) training/inference pipeline"
 readme = "README.md"
 requires-python = ">=3.10"
-
 dependencies = [
   "torch>=2.1",
   "torchvision>=0.16",
@@ -19,6 +18,9 @@ dependencies = [
   "tqdm>=4.66",
   "pyyaml>=6.0",
   "kagglehub>=0.2.5",
+  "ray[train]>=2.3.0",
+  "fastapi>=0.110",
+  "uvicorn>=0.24",
 ]
 
 [project.optional-dependencies]
@@ -31,22 +33,9 @@ dev = [
   "ipykernel",
 ]
 
-ray = [
-  "ray[train]>=2.8.0",
-]
-
-serve = [
-  "fastapi>=0.110",
-  "uvicorn>=0.24",
-]
-
-
 [project.scripts]
-mmbiometric-build-manifest = "mmbiometric.cli:build_manifest_main"
-mmbiometric-train = "mmbiometric.cli:train_main"
 mmbiometric-ray-preprocess = "mmbiometric.cli_ray:preprocess_main"
 mmbiometric-ray-train = "mmbiometric.cli_ray:train_main"
-
 
 
 [tool.ruff]
@@ -66,10 +55,3 @@ no_implicit_optional = true
 [tool.pytest.ini_options]
 addopts = "-q --disable-warnings"
 testpaths = ["tests"]
-
-[tool.setuptools]
-package-dir = {"" = "src"}
-
-[tool.setuptools.packages.find]
-where = ["src"]
-

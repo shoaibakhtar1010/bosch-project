@@ -7,7 +7,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from mmbiometric.config import load_config
-from mmbiometric.data.dataset import MultimodalBiometricDataset
+from mmbiometric.data.dataset import MultimodalBiometricDataset, collate_samples
 from mmbiometric.data.manifest import build_manifest
 from mmbiometric.data.split import split_manifest
 from mmbiometric.data.transforms import default_image_transform
@@ -74,8 +74,20 @@ def train_main() -> None:
     train_ds = MultimodalBiometricDataset(splits.train_manifest, tfm, tfm, label_to_idx)
     val_ds = MultimodalBiometricDataset(splits.val_manifest, tfm, tfm, label_to_idx)
 
-    train_loader = DataLoader(train_ds, batch_size=cfg.data.batch_size, shuffle=True, num_workers=cfg.data.num_workers)
-    val_loader = DataLoader(val_ds, batch_size=cfg.data.batch_size, shuffle=False, num_workers=cfg.data.num_workers)
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=cfg.data.batch_size,
+        shuffle=True,
+        num_workers=cfg.data.num_workers,
+        collate_fn=collate_samples,
+    )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=cfg.data.batch_size,
+        shuffle=False,
+        num_workers=cfg.data.num_workers,
+        collate_fn=collate_samples,
+    )
 
     # 4) model
     model = MultimodalNet(

@@ -45,8 +45,18 @@ class AppConfig:
     train: TrainConfig
 
 
-def load_config(path: Path) -> AppConfig:
-    raw: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8"))
+def load_config(path: str | Path) -> AppConfig:
+    """Load YAML config into strongly-typed dataclasses.
+
+    Ray workers often receive the config path as a plain string (e.g. because
+    `train_loop_config` is JSON-serialised). Accept both `str` and `Path`.
+    """
+
+    p = Path(path).expanduser()
+    if not p.exists():
+        raise FileNotFoundError(f"Config file not found: {p}")
+
+    raw: dict[str, Any] = yaml.safe_load(p.read_text(encoding="utf-8"))
     data = raw["data"]
     model = raw["model"]
     train = raw["train"]

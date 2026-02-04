@@ -20,6 +20,22 @@ class Sample:
     label: torch.Tensor
 
 
+def collate_samples(batch: list[Sample]) -> Sample:
+    """Collate a list of `Sample` objects into a single batched `Sample`.
+
+    Torch's default collate doesn't handle dataclasses, so any DataLoader
+    reading this dataset must use this `collate_fn`.
+    """
+
+    if not batch:
+        raise ValueError("Empty batch")
+
+    iris = torch.stack([s.iris for s in batch], dim=0)
+    fingerprint = torch.stack([s.fingerprint for s in batch], dim=0)
+    labels = torch.stack([s.label for s in batch], dim=0)
+    return Sample(iris=iris, fingerprint=fingerprint, label=labels)
+
+
 class MultimodalBiometricDataset(Dataset[Sample]):
     """Dataset returning (iris_tensor, fingerprint_tensor, label)."""
 

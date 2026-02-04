@@ -1,65 +1,96 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
-import kagglehub
+import ray
 
 from mmbiometric.distributed.ray_manifest import build_manifest_distributed
-from mmbiometric.distributed.ray_train import RayTrainArgs, train_distributed
+from mmbiometric.distributed.ray_train import train_distributed
 
 
-def preprocess_main() -> None:
-    p = argparse.ArgumentParser()
-    p.add_argument("--dataset-dir", type=str, required=False, help="Dataset root path")
-    p.add_argument("--output-dir", type=str, required=True, help="Run directory (manifest will be written here)")
-    p.add_argument("--subject-regex", type=str, default=r"(\d+)")
-    p.add_argument("--num-cpus", type=int, default=16)
-    args = p.parse_args()
-
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    if args.dataset_dir:
-        dataset_dir = Path(args.dataset_dir)
+def _ray_init() -> None:
+    """Initialize Ray using RAY_ADDRESS if present, otherwise start local."""
+    address = os.environ.get("RAY_ADDRESS") or os.environ.get("RAY_HEAD_ADDRESS")
+    if ray.is_initialized():
+        return
+    if address:
+        ray.init(address=address)
     else:
-        # fallback: download in CLI if dataset-dir not provided
-        dataset_dir = Path(
-            kagglehub.dataset_download("ninadmehendale/multimodal-iris-fingerprint-biometric-data")
-        )
+        ray.init()
 
+
+def preprocess_main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(prog="mmbiometric-ray-preprocess")
+    parser.add_argument("--dataset-dir", required=True, help="Dataset root directory")
+    parser.add_argument(
+        "--output-dir",
+        required=True,
+        help="Output directory where manifest.parquet will be written",
+    )
+    parser.add_argument("--num-cpus", type=int, default=4, help="CPUs to use for preprocessing")
+    args = parser.parse_args(argv)
+
+    _ray_init()
+
+    # IMPORTANT FIX:
+    # build_manifest_distributed expects output_dir (directory), not output_path (file).
     build_manifest_distributed(
-        dataset_dir=dataset_dir,
-        output_path=output_dir / "manifest.parquet",
-        subject_regex=args.subject_regex,
+        dataset_dir=args.dataset_dir,
+        output_dir=args.output_dir,
         num_cpus=args.num_cpus,
     )
 
+    out_manifest = Path(args.output_dir) / "manifest.parquet"
+    print(f"[OK] Wrote manifest: {out_manifest}")
 
-def train_main() -> None:
-    p = argparse.ArgumentParser()
-    p.add_argument("--config", type=str, default="configs/default.yaml")
-    p.add_argument("--dataset-dir", type=str, required=False, help="Dataset root path (for metadata only)")
-    p.add_argument("--output-dir", type=str, required=True, help="Run directory containing manifest.parquet")
-    p.add_argument("--subject-regex", type=str, default=r"(\d+)")
-    p.add_argument("--num-workers", type=int, default=2)
-    p.add_argument("--use-gpu", action="store_true")
-    p.add_argument("--cpus-per-worker", type=int, default=4)
-    args = p.parse_args()
 
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+def train_main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(prog="mmbiometric-ray-train")
+    parser.add_argument("--config", required=True, help="Path to YAML config")
+    parser.add_argument("--dataset-dir", required=True, help="Dataset root directory")
+    parser.add_argument("--output-dir", required=True, help="Output directory (must contain manifest.parquet)")
+    parser.add_argument("--num-workers", type=int, default=2, help="Number of Ray Train workers")
+    parser.add_argument("--cpus-per-worker", type=int, default=2, help="CPUs per worker")
+    args = parser.parse_args(argv)
 
-    dataset_dir = Path(args.dataset_dir) if args.dataset_dir else Path(".")
+    _ray_init()
 
+    # Your train_distributed() expects an args object; keep this consistent with your ray_train.py.
     train_distributed(
-        RayTrainArgs(
-            config_path=Path(args.config),
-            dataset_dir=dataset_dir,
-            output_dir=output_dir,
-            subject_regex=args.subject_regex,
-            num_workers=args.num_workers,
-            use_gpu=args.use_gpu,
-            cpus_per_worker=args.cpus_per_worker,
-        )
+        config=args.config,
+        dataset_dir=args.dataset_dir,
+        output_dir=args.output_dir,
+        num_workers=args.num_workers,
+        cpus_per_worker=args.cpus_per_worker,
     )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(prog="mmbiometric-ray")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_pre = sub.add_parser("preprocess")
+    p_pre.add_argument("--dataset-dir", required=True)
+    p_pre.add_argument("--output-dir", required=True)
+    p_pre.add_argument("--num-cpus", type=int, default=4)
+
+    p_tr = sub.add_parser("train")
+    p_tr.add_argument("--config", required=True)
+    p_tr.add_argument("--dataset-dir", required=True)
+    p_tr.add_argument("--output-dir", required=True)
+    p_tr.add_argument("--num-workers", type=int, default=2)
+    p_tr.add_argument("--cpus-per-worker", type=int, default=2)
+
+    ns, _ = parser.parse_known_args()
+    if ns.cmd == "preprocess":
+        preprocess_main()
+    elif ns.cmd == "train":
+        train_main()
+    else:
+        raise SystemExit(f"Unknown command: {ns.cmd}")
+
+
+if __name__ == "__main__":
+    main()

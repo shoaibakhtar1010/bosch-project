@@ -11,6 +11,10 @@ def init_ray(num_cpus: int | None = None, num_gpus: int | None = None) -> None:
     Connect to an existing Ray cluster if RAY_ADDRESS is set,
     otherwise start a local Ray runtime.
     """
+    # Avoid noisy "Calling ray.init() again" logs.
+    if ray.is_initialized():
+        return
+
     address = os.environ.get("RAY_ADDRESS")
     if address:
         ray.init(address=address, ignore_reinit_error=True)
