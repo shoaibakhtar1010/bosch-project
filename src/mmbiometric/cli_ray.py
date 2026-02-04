@@ -31,6 +31,12 @@ def preprocess_main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--num-cpus", type=int, default=4, help="CPUs to use for preprocessing")
     args = parser.parse_args(argv)
+    config_value = args.config.strip()
+    if not config_value:
+        raise SystemExit("Config path is empty. Set --config or CONFIG_PATH to a valid YAML file.")
+    config_path = Path(config_value).expanduser()
+    if config_path.is_dir():
+        raise SystemExit(f"Config path must be a file, got directory: {config_path}")
 
     _ray_init()
 
