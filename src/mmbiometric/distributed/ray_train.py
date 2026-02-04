@@ -59,6 +59,33 @@ class RayTrainArgs:
     num_workers: int = 2
     cpus_per_worker: int = 2
     use_gpu: bool = False
+    master_addr: str | None = None
+    gloo_socket_ifname: str | None = None
+
+
+def _apply_torch_dist_env(args: RayTrainArgs) -> None:
+    if args.master_addr:
+        os.environ.setdefault("MASTER_ADDR", args.master_addr)
+    if args.gloo_socket_ifname:
+        os.environ.setdefault("GLOO_SOCKET_IFNAME", args.gloo_socket_ifname)
+
+    if os.name != "nt":
+        return
+
+    if os.environ.get("MASTER_ADDR"):
+        return
+
+    address = os.environ.get("RAY_ADDRESS") or os.environ.get("RAY_HEAD_ADDRESS")
+    if address and ":" in address:
+        os.environ.setdefault("MASTER_ADDR", address.split(":", 1)[0])
+        return
+
+    try:
+        from ray._private.services import get_node_ip_address
+
+        os.environ.setdefault("MASTER_ADDR", get_node_ip_address())
+    except Exception:
+        pass
 
 
 def train_distributed(args: RayTrainArgs) -> "ray.train.Result":
@@ -77,6 +104,8 @@ def train_distributed(args: RayTrainArgs) -> "ray.train.Result":
         ray.init(address=address or "auto", ignore_reinit_error=True)
 
     app_cfg = load_config(args.config_path)
+
+    _apply_torch_dist_env(args)
 
     trainer = TorchTrainer(
         train_loop_per_worker=_train_loop_per_worker,

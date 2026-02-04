@@ -59,6 +59,14 @@ def train_main(argv: list[str] | None = None) -> None:
     parser.add_argument("--output-dir", required=True, help="Output directory (must contain manifest.parquet)")
     parser.add_argument("--num-workers", type=int, default=2, help="Number of Ray Train workers")
     parser.add_argument("--cpus-per-worker", type=int, default=2, help="CPUs per worker")
+    parser.add_argument(
+        "--master-addr",
+        help="Override MASTER_ADDR for torch distributed (useful on Windows multi-worker).",
+    )
+    parser.add_argument(
+        "--gloo-ifname",
+        help="Override GLOO_SOCKET_IFNAME for torch distributed (e.g. 'Wi-Fi').",
+    )
     args = parser.parse_args(argv)
     config_value = args.config.strip()
     if not config_value:
@@ -75,6 +83,8 @@ def train_main(argv: list[str] | None = None) -> None:
         output_dir=args.output_dir,
         num_workers=args.num_workers,
         cpus_per_worker=args.cpus_per_worker,
+        master_addr=args.master_addr,
+        gloo_socket_ifname=args.gloo_ifname,
     )
     train_distributed(ray_args)
 
