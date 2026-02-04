@@ -65,25 +65,25 @@ class RayTrainArgs:
 
 def _apply_torch_dist_env(args: RayTrainArgs) -> None:
     if args.master_addr:
-        os.environ["MASTER_ADDR"] = args.master_addr
+        os.environ.setdefault("MASTER_ADDR", args.master_addr)
     if args.gloo_socket_ifname:
-        os.environ["GLOO_SOCKET_IFNAME"] = args.gloo_socket_ifname
+        os.environ.setdefault("GLOO_SOCKET_IFNAME", args.gloo_socket_ifname)
 
     if os.name != "nt":
         return
 
-    if args.master_addr:
+    if os.environ.get("MASTER_ADDR"):
         return
 
     address = os.environ.get("RAY_ADDRESS") or os.environ.get("RAY_HEAD_ADDRESS")
     if address and ":" in address:
-        os.environ["MASTER_ADDR"] = address.split(":", 1)[0]
+        os.environ.setdefault("MASTER_ADDR", address.split(":", 1)[0])
         return
 
     try:
         from ray._private.services import get_node_ip_address
 
-        os.environ["MASTER_ADDR"] = get_node_ip_address()
+        os.environ.setdefault("MASTER_ADDR", get_node_ip_address())
     except Exception:
         pass
 
