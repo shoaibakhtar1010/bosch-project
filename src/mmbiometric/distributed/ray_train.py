@@ -20,6 +20,12 @@ from __future__ import annotations
 
 import json
 import os
+
+if os.name == "nt":
+    # Work around PyTorch distributed rendezvous issues on Windows.
+    # See https://github.com/pytorch/pytorch/issues/150381
+    os.environ.setdefault("USE_LIBUV", "0")
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Tuple
@@ -235,7 +241,7 @@ def _train_loop_per_worker(cfg: Dict) -> None:
     num_classes = len(label_to_idx)
 
     image_size = int(getattr(app_cfg.data, "image_size", 128))
-    tfm = default_image_transform(size=image_size)
+    tfm = default_image_transform(image_size)
 
     # Create *per-worker* local parquet files for datasets.
     # This is important because `MultimodalBiometricDataset` reads a parquet from disk.
@@ -250,13 +256,13 @@ def _train_loop_per_worker(cfg: Dict) -> None:
         manifest_path=train_manifest_path,
         iris_transform=tfm,
         fingerprint_transform=tfm,
-        label_to_idx=label_to_idx,
+        label_to_index=label_to_idx,
     )
     val_ds = MultimodalBiometricDataset(
         manifest_path=val_manifest_path,
         iris_transform=tfm,
         fingerprint_transform=tfm,
-        label_to_idx=label_to_idx,
+        label_to_index=label_to_idx,
     )
 
     # batch size lives under app_cfg.data (not app_cfg.train)
@@ -291,14 +297,15 @@ def _train_loop_per_worker(cfg: Dict) -> None:
     device = train.torch.get_device()
 
     model = MultimodalNet(
-        num_classes=num_classes,
+        backbone=str(app_cfg.model.backbone),
         embedding_dim=int(app_cfg.model.embedding_dim),
+        num_classes=num_classes,
         dropout=float(app_cfg.model.dropout),
-        use_pretrained=bool(app_cfg.model.use_pretrained),
     )
     model.to(device)
     model = train.torch.prepare_model(model)
     train_loader = train.torch.prepare_data_loader(train_loader)
+    val_loader = train.torch.prepare_data_loader(val_loader)
 
     criterion: nn.Module = nn.CrossEntropyLoss()
     optimizer = Adam(
@@ -308,7 +315,21 @@ def _train_loop_per_worker(cfg: Dict) -> None:
     )
 
     best_val_acc = -1.0
-    best_path = output_dir / "best_model.pt"
+    best_path = output_dir / "best.pt"
+
+    if rank == 0:
+        idx_to_label = {i: sid for sid, i in label_to_idx.items()}
+        (output_dir / "labels.json").write_text(json.dumps(idx_to_label, indent=2), encoding="utf-8")
+
+        meta = {
+            "num_classes": num_classes,
+            "backbone": str(app_cfg.model.backbone),
+            "embedding_dim": int(app_cfg.model.embedding_dim),
+            "dropout": float(app_cfg.model.dropout),
+            "image_size": image_size,
+            "config_path": str(Path(config_path).resolve()),
+        }
+        (output_dir / "model_metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
     for epoch in range(int(app_cfg.train.epochs)):
         model.train()
@@ -370,16 +391,13 @@ def _train_loop_per_worker(cfg: Dict) -> None:
             # Save best model.
             if val_acc > best_val_acc:
                 best_val_acc = val_acc
-                torch.save(getattr(model, "module", model).state_dict(), best_path)
-
-            # Metadata for downstream eval.
-            meta = {
-                "num_classes": num_classes,
-                "label_to_idx": label_to_idx,
-                "image_size": image_size,
-                "config_path": str(Path(config_path).resolve()),
-            }
-            (output_dir / "model_metadata.json").write_text(json.dumps(meta, indent=2))
+                torch.save(
+                    {
+                        "model_state_dict": getattr(model, "module", model).state_dict(),
+                        "val_acc": best_val_acc,
+                    },
+                    best_path,
+                )
 
             train.report(
                 {
